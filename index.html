@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL → ER 图 | 小蓝虾🦐 复刻版</title>
+<style>
+:root {
+  --bg: #0e1116;
+  --panel: #141923;
+  --panel2: #1b212b;
+  --border: #232a35;
+  --text: #e8edf4;
+  --muted: #8a95a3;
+  --accent: #5aa7ff;
+  --pk: #f5c451;
+  --fk: #5aa7ff;
+  --err: #e06c6c;
+  --ok: #5fbf83;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg); color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Top bar */
+.topbar {
+  height: 48px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand svg { width: 20px; height: 20px; color: var(--accent); }
+.brand span { font-weight: 700; font-size: 16px; }
+.brand .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 2px 8px; border-radius: 12px; }
+.actions { display: flex; gap: 6px; align-items: center; }
+.btn {
+  font: inherit; font-size: 13px; font-weight: 500; color: var(--text);
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  padding: 7px 12px; cursor: pointer; transition: all .12s; white-space: nowrap;
+}
+.btn:hover { background: var(--panel2); border-color: var(--border); }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.1); }
+.sep { width: 1px; height: 20px; background: var(--border); }
+
+/* Layout */
+.layout { display: flex; height: calc(100% - 48px); }
+.editor-pane {
+  width: 400px; min-width: 220px; display: flex; flex-direction: column;
+  background: var(--panel); border-right: 1px solid var(--border);
+}
+.pane-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; font-size: 12px; font-weight: 600; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .05em;
+  border-bottom: 1px solid var(--border);
+}
+#status { text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px; }
+#status.ok { color: var(--ok); }
+#status.err { color: var(--err); }
+
+#sql {
+  flex: 1; resize: none; outline: none; border: 0;
+  padding: 14px; background: var(--bg); color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px; line-height: 1.55; tab-size: 2;
+}
+#sql::placeholder { color: var(--muted); }
+
+/* Canvas */
+.canvas-pane { position: relative; flex: 1; overflow: hidden; }
+#canvas { display: block; width: 100%; height: 100%; }
+
+/* Zoom */
+.zoom-bar {
+  position: absolute; bottom: 16px; right: 16px;
+  display: flex; gap: 2px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px; padding: 3px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.2);
+}
+.zoom-bar .btn { padding: 5px 10px; }
+#zoom-pct { min-width: 50px; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* Empty hint */
+.empty-hint {
+  position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+}
+.empty-card {
+  pointer-events: auto; text-align: center; max-width: 380px; padding: 28px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.25);
+}
+.empty-card h2 { margin: 0 0 8px; font-size: 18px; }
+.empty-card p { margin: 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.empty-card code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--panel2); padding: 2px 6px; border-radius: 4px; }
+.privacy { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+
+/* Splitter */
+.splitter { width: 6px; cursor: col-resize; flex: 0 0 auto; z-index: 5; }
+.splitter:hover { background: rgba(90,167,255,.15); }
+
+@media (max-width: 720px) {
+  .layout { flex-direction: column; }
+  .editor-pane { width: 100% !important; height: 38%; border-right: 0; border-bottom: 1px solid var(--border); }
+  .splitter { display: none; }
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>
+    </svg>
+    <span>SQL → ER 图</span>
+    <span class="tag">小蓝虾🦐复刻</span>
+  </div>
+  <div class="actions">
+    <button class="btn" id="btn-example">示例</button>
+    <span class="sep"></span>
+    <button class="btn" id="btn-arrange">排列</button>
+    <button class="btn" id="btn-fit">适应</button>
+    <span class="sep"></span>
+    <button class="btn" id="btn-png">导出 PNG</button>
+    <button class="btn" id="btn-theme">🌓</button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="editor-pane" id="editor-pane">
+    <div class="pane-head">
+      <span>SQL Schema</span>
+      <span id="status"></span>
+    </div>
+    <textarea id="sql" spellcheck="false" autocomplete="off" autocapitalize="off"
+      placeholder="粘贴 CREATE TABLE 语句..."></textarea>
+  </section>
+  <div class="splitter" id="splitter"></div>
+  <section class="canvas-pane">
+    <canvas id="canvas"></canvas>
+    <div class="empty-hint" id="empty">
+      <div class="empty-card">
+        <h2>粘贴 SQL，看到关系图 ✨</h2>
+        <p>在左侧粘贴 <code>CREATE TABLE</code> 语句，即刻生成交互式 ER 图。拖拽表格、滚轮缩放、导出 PNG。</p>
+        <button class="btn primary" id="btn-example2">加载示例</button>
+        <p class="privacy">🔒 100% 本地运行，SQL 永不离开你的浏览器</p>
+      </div>
+    </div>
+    <div class="zoom-bar">
+      <button class="btn" id="zoom-out">−</button>
+      <button class="btn" id="zoom-pct">100%</button>
+      <button class="btn" id="zoom-in">+</button>
+    </div>
+  </section>
+</main>
+
+<script>
+// ========== SQL PARSER ==========
+function parseSQL(sql) {
+  const tables = [];
+  const relations = [];
+  const tableMap = {};
+
+  // Remove comments
+  sql = sql.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  // Find CREATE TABLE statements
+  const createRe = /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`"\[]?(\w+(?:\.\w+)?)[`"\]]?\s*\(([\s\S]*?)\)\s*;/gi;
+  let match;
+
+  while ((match = createRe.exec(sql)) !== null) {
+    const rawName = match[1].includes('.') ? match[1].split('.').pop() : match[1];
+    const name = rawName.replace(/[`"\[\]]/g, '');
+    const body = match[2];
+    const columns = [];
+    const pks = new Set();
+    const fkCols = new Set();
+
+    // Split on top-level commas
+    const parts = splitTopLevel(body);
+
+    for (const part of parts) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+
+      // PRIMARY KEY constraint
+      const pkMatch = trimmed.match(/PRIMARY\s+KEY\s*\(([^)]+)\)/i);
+      if (pkMatch) {
+        pkMatch[1].split(',').forEach(c => pks.add(clean(c)));
+        continue;
+      }
+
+      // FOREIGN KEY constraint
+      const fkMatch = trimmed.match(/(?:CONSTRAINT\s+\S+\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+[`"\[]?(\w+(?:\.\w+)?)[`"\]]?\s*\(([^)]+)\)/i);
+      if (fkMatch) {
+        const fromCols = fkMatch[1].split(',').map(clean);
+        const toTable = fkMatch[2].includes('.') ? fkMatch[2].split('.').pop() : fkMatch[2];
+        const toCols = fkMatch[3].split(',').map(clean);
+        fromCols.forEach(c => fkCols.add(c));
+        relations.push({ from: name, fromCols, to: clean(toTable), toCols });
+        continue;
+      }
+
+      // UNIQUE, CHECK, INDEX constraints
+      if (/^(UNIQUE|CHECK|INDEX|KEY|CONSTRAINT)\b/i.test(trimmed)) continue;
+
+      // Column definition
+      const colMatch = trimmed.match(/^[`"\[]?(\w+)[`"\]]?\s+(.+)/i);
+      if (colMatch) {
+        const colName = colMatch[1];
+        const rest = colMatch[2];
+
+        // Extract type (first word or word with parens)
+        const typeMatch = rest.match(/^(\w+(?:\([^)]*\))?)/);
+        const type = typeMatch ? typeMatch[1].toUpperCase() : '';
+
+        const isPK = /PRIMARY\s+KEY/i.test(rest);
+        const isNN = /NOT\s+NULL/i.test(rest) || isPK;
+        const isUQ = /UNIQUE/i.test(rest);
+
+        if (isPK) pks.add(colName);
+
+        // Inline REFERENCES
+        const refMatch = rest.match(/REFERENCES\s+[`"\[]?(\w+(?:\.\w+)?)[`"\]]?\s*\(([^)]+)\)/i);
+        if (refMatch) {
+          const toTable = refMatch[1].includes('.') ? refMatch[1].split('.').pop() : refMatch[1];
+          fkCols.add(colName);
+          relations.push({ from: name, fromCols: [colName], to: clean(toTable), toCols: [clean(refMatch[2])] });
+        }
+
+        columns.push({ name: colName, type, pk: isPK, nn: isNN, uq: isUQ, fk: false });
+      }
+    }
+
+    // Mark PKs and FKs
+    columns.forEach(c => {
+      if (pks.has(c.name)) c.pk = true;
+      if (fkCols.has(c.name)) c.fk = true;
+    });
+
+    const table = { name, key: name.toLowerCase(), columns };
+    tables.push(table);
+    tableMap[table.key] = table;
+  }
+
+  // ALTER TABLE ... ADD FOREIGN KEY
+  const alterRe = /ALTER\s+TABLE\s+[`"\[]?(\w+(?:\.\w+)?)[`"\]]?\s+ADD\s+(?:CONSTRAINT\s+\S+\s+)?FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+[`"\[]?(\w+(?:\.\w+)?)[`"\]]?\s*\(([^)]+)\)/gi;
+  while ((match = alterRe.exec(sql)) !== null) {
+    const fromTable = clean(match[1].includes('.') ? match[1].split('.').pop() : match[1]);
+    const fromCols = match[2].split(',').map(clean);
+    const toTable = clean(match[3].includes('.') ? match[3].split('.').pop() : match[3]);
+    const toCols = match[4].split(',').map(clean);
+    relations.push({ from: fromTable, fromCols, to: toTable, toCols });
+    // Mark FK on columns
+    const t = tableMap[fromTable.toLowerCase()];
+    if (t) fromCols.forEach(fc => {
+      const col = t.columns.find(c => c.name.toLowerCase() === fc.toLowerCase());
+      if (col) col.fk = true;
+    });
+  }
+
+  return { tables, relations };
+}
+
+function splitTopLevel(s) {
+  const parts = [];
+  let depth = 0, start = 0, q = null;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) { if (c === q) q = null; continue; }
+    if (c === "'" || c === '"') { q = c; continue; }
+    if (c === '(') depth++;
+    if (c === ')') depth--;
+    if (c === ',' && depth === 0) { parts.push(s.slice(start, i)); start = i + 1; }
+  }
+  parts.push(s.slice(start));
+  return parts;
+}
+
+function clean(s) { return s.trim().replace(/^[`"\[]/,'').replace(/[`"\]]$/,''); }
+
+// ========== LAYOUT ENGINE (force-directed) ==========
+function layoutTables(tables, relations) {
+  const n = tables.length;
+  if (n === 0) return;
+
+  // Initial grid placement
+  const cols = Math.ceil(Math.sqrt(n));
+  tables.forEach((t, i) => {
+    t.x = (i % cols) * 320 + 60;
+    t.y = Math.floor(i / cols) * 300 + 60;
+  });
+
+  // Build adjacency
+  const adj = new Map();
+  tables.forEach(t => adj.set(t.key, new Set()));
+  relations.forEach(r => {
+    const f = r.from.toLowerCase(), to = r.to.toLowerCase();
+    if (adj.has(f) && adj.has(to) && f !== to) {
+      adj.get(f).add(to);
+      adj.get(to).add(f);
+    }
+  });
+
+  const byKey = new Map(tables.map(t => [t.key, t]));
+
+  // Simple force-directed: 80 iterations
+  for (let iter = 0; iter < 80; iter++) {
+    const forces = new Map(tables.map(t => [t.key, { fx: 0, fy: 0 }]));
+
+    // Repulsion
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const a = tables[i], b = tables[j];
+        let dx = (a.x + a.w/2) - (b.x + b.w/2);
+        let dy = (a.y + a.h/2) - (b.y + b.h/2);
+        const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+        const force = 80000 / (dist * dist);
+        dx = dx / dist * force;
+        dy = dy / dist * force;
+        forces.get(a.key).fx += dx;
+        forces.get(a.key).fy += dy;
+        forces.get(b.key).fx -= dx;
+        forces.get(b.key).fy -= dy;
+      }
+    }
+
+    // Attraction (spring)
+    relations.forEach(r => {
+      const a = byKey.get(r.from.toLowerCase());
+      const b = byKey.get(r.to.toLowerCase());
+      if (!a || !b || a === b) return;
+      let dx = (b.x + b.w/2) - (a.x + a.w/2);
+      let dy = (b.y + b.h/2) - (a.y + a.h/2);
+      const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+      const force = (dist - 280) * 0.04;
+      dx = dx / dist * force;
+      dy = dy / dist * force;
+      forces.get(a.key).fx += dx;
+      forces.get(a.key).fy += dy;
+      forces.get(b.key).fx -= dx;
+      forces.get(b.key).fy -= dy;
+    });
+
+    // Apply
+    const damping = 0.3 * (1 - iter/80);
+    tables.forEach(t => {
+      const f = forces.get(t.key);
+      t.x += f.fx * damping;
+      t.y += f.fy * damping;
+    });
+  }
+
+  // Normalize positions
+  let minX = Infinity, minY = Infinity;
+  tables.forEach(t => { minX = Math.min(minX, t.x); minY = Math.min(minY, t.y); });
+  tables.forEach(t => { t.x -= minX - 60; t.y -= minY - 60; });
+}
+
+// ========== RENDERER ==========
+const FONT = '13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+const HEADER_FONT = '600 14px ui-sans-serif, system-ui, sans-serif';
+const TYPE_FONT = '12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+const BADGE_FONT = '700 9px ui-sans-serif, system-ui, sans-serif';
+const ROW_H = 26;
+const HEADER_H = 34;
+const PAD_X = 12;
+const BADGE_W = 30;
+const GAP = 14;
+
+const DARK = {
+  bg: '#0e1116', grid: '#171c24', tableBg: '#1b212b', tableBorder: '#2b333f',
+  header: '#222c3a', headerText: '#e8edf4', rowText: '#c4ccd6', typeText: '#6f7b8a',
+  rowAlt: '#1e2530', pk: '#f5c451', fk: '#5aa7ff', edge: '#5d6b7d', edgeHi: '#5aa7ff',
+  shadow: 'rgba(0,0,0,0.45)', divider: '#2b333f'
+};
+const LIGHT = {
+  bg: '#f4f6fa', grid: '#e6eaf0', tableBg: '#ffffff', tableBorder: '#d6dde6',
+  header: '#eef2f7', headerText: '#1c2530', rowText: '#39424d', typeText: '#8a95a3',
+  rowAlt: '#f7f9fc', pk: '#c8901a', fk: '#2f6fd0', edge: '#a9b4c2', edgeHi: '#2f6fd0',
+  shadow: 'rgba(20,30,50,0.16)', divider: '#e3e8ef'
+};
+
+let theme = DARK;
+let isDark = true;
+
+// Measure table dimensions
+function measureTable(t, ctx) {
+  ctx.font = HEADER_FONT;
+  let w = ctx.measureText(t.name).width + PAD_X * 2 + 24;
+  ctx.font = FONT;
+  for (const c of t.columns) {
+    const nw = ctx.measureText(c.name).width;
+    ctx.font = TYPE_FONT;
+    const tw = ctx.measureText(c.type || '').width;
+    ctx.font = FONT;
+    const total = BADGE_W + nw + GAP + tw + PAD_X * 2;
+    if (total > w) w = total;
+  }
+  t.w = Math.max(140, Math.min(360, Math.ceil(w)));
+  t.h = HEADER_H + t.columns.length * ROW_H;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+
+function truncate(ctx, text, maxW) {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let lo = 0, hi = text.length;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    ctx.measureText(text.slice(0, mid) + '…').width <= maxW ? lo = mid : hi = mid - 1;
+  }
+  return text.slice(0, lo) + '…';
+}
+
+function drawTable(ctx, t, highlight, dim) {
+  ctx.save();
+  ctx.globalAlpha = dim ? 0.2 : 1;
+
+  // Shadow
+  if (!dim) {
+    ctx.shadowColor = theme.shadow;
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 6;
+  }
+
+  // Body
+  roundRect(ctx, t.x, t.y, t.w, t.h, 10);
+  ctx.fillStyle = theme.tableBg;
+  ctx.fill();
+  ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+
+  // Alt rows
+  for (let i = 0; i < t.columns.length; i++) {
+    if (i % 2 === 1) {
+      ctx.fillStyle = theme.rowAlt;
+      ctx.fillRect(t.x + 1, t.y + HEADER_H + i * ROW_H, t.w - 2, ROW_H);
+    }
+  }
+
+  // Header
+  ctx.save();
+  roundRect(ctx, t.x, t.y, t.w, HEADER_H, 10);
+  ctx.clip();
+  ctx.fillStyle = theme.header;
+  ctx.fillRect(t.x, t.y, t.w, HEADER_H);
+  ctx.restore();
+
+  ctx.fillStyle = theme.headerText;
+  ctx.font = HEADER_FONT;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(truncate(ctx, t.name, t.w - PAD_X * 2 - 18), t.x + PAD_X, t.y + HEADER_H / 2 + 1);
+
+  // Divider
+  ctx.strokeStyle = theme.divider;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(t.x, t.y + HEADER_H + 0.5);
+  ctx.lineTo(t.x + t.w, t.y + HEADER_H + 0.5);
+  ctx.stroke();
+
+  // Columns
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < t.columns.length; i++) {
+    const c = t.columns[i];
+    const y = t.y + HEADER_H + i * ROW_H + ROW_H / 2;
+
+    // Badge
+    if (c.pk) {
+      ctx.font = BADGE_FONT; ctx.fillStyle = theme.pk;
+      ctx.fillText('PK', t.x + PAD_X - 2, y);
+    } else if (c.fk) {
+      ctx.font = BADGE_FONT; ctx.fillStyle = theme.fk;
+      ctx.fillText('FK', t.x + PAD_X - 2, y);
+    }
+
+    // Name
+    ctx.font = FONT; ctx.fillStyle = theme.rowText;
+    ctx.textAlign = 'left';
+    ctx.fillText(truncate(ctx, c.name, t.w - BADGE_W - PAD_X * 2 - 60), t.x + PAD_X + BADGE_W - 4, y);
+
+    // Type
+    if (c.type) {
+      ctx.font = TYPE_FONT; ctx.fillStyle = theme.typeText;
+      ctx.textAlign = 'right';
+      ctx.fillText(truncate(ctx, c.type, 120), t.x + t.w - PAD_X, y);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // Border
+  roundRect(ctx, t.x + 0.5, t.y + 0.5, t.w - 1, t.h - 1, 10);
+  ctx.strokeStyle = highlight ? theme.edgeHi : theme.tableBorder;
+  ctx.lineWidth = highlight ? 2.5 : 1;
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function columnY(t, colName) {
+  if (!colName) return t.h / 2;
+  const idx = t.columns.findIndex(c => c.name.toLowerCase() === colName.toLowerCase());
+  if (idx < 0) return HEADER_H / 2;
+  return HEADER_H + idx * ROW_H + ROW_H / 2;
+}
+
+function drawEdge(ctx, from, to, rel, highlight, dim) {
+  const fy = from.y + columnY(from, rel.fromCols[0]);
+  const ty = to.y + columnY(to, rel.toCols[0]);
+  const fromRight = (from.x + from.w / 2) < (to.x + to.w / 2);
+  const fx = fromRight ? from.x + from.w : from.x;
+  const tx = fromRight ? to.x : to.x + to.w;
+  const dx = Math.max(28, Math.abs(tx - fx) * 0.4);
+  const c1x = fx + (fromRight ? dx : -dx);
+  const c2x = tx + (fromRight ? -dx : dx);
+
+  ctx.save();
+  ctx.globalAlpha = dim ? 0.06 : highlight ? 1 : 0.5;
+  ctx.strokeStyle = highlight ? theme.edgeHi : theme.edge;
+  ctx.lineWidth = highlight ? 2.2 : 1.5;
+  ctx.beginPath();
+  ctx.moveTo(fx, fy);
+  ctx.bezierCurveTo(c1x, fy, c2x, ty, tx, ty);
+  ctx.stroke();
+
+  // Dots at endpoints
+  ctx.fillStyle = ctx.strokeStyle;
+  [fx, fy, tx, ty].forEach((_, i) => {
+    if (i % 2 === 0) {
+      ctx.beginPath();
+      ctx.arc(i === 0 ? fx : tx, i === 0 ? fy : ty, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+  ctx.restore();
+}
+
+// ========== MAIN APP ==========
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const sqlEl = document.getElementById('sql');
+const statusEl = document.getElementById('status');
+const emptyEl = document.getElementById('empty');
+
+let model = { tables: [], relations: [] };
+let cam = { x: 0, y: 0, scale: 1 };
+let dpr = Math.min(window.devicePixelRatio || 1, 2);
+let viewW, viewH;
+let drag = null, pan = null;
+let hoverTable = null;
+let focusTable = null;
+let focusKeys = null;
+
+function resize() {
+  const rect = canvas.getBoundingClientRect();
+  viewW = rect.width; viewH = rect.height;
+  canvas.width = Math.round(viewW * dpr);
+  canvas.height = Math.round(viewH * dpr);
+  render();
+}
+
+function render() {
+  const W = canvas.width, H = canvas.height;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = theme.bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid
+  const step = 32 * cam.scale * dpr;
+  if (step > 8) {
+    const ox = (cam.x * dpr) % step;
+    const oy = (cam.y * dpr) % step;
+    ctx.strokeStyle = theme.grid; ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let x = ox; x < W; x += step) { ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+    for (let y = oy; y < H; y += step) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke();
+  }
+
+  // World transform
+  ctx.setTransform(dpr * cam.scale, 0, 0, dpr * cam.scale, cam.x * dpr, cam.y * dpr);
+
+  const byKey = new Map(model.tables.map(t => [t.key, t]));
+
+  // Edges
+  model.relations.forEach(r => {
+    const from = byKey.get(r.from.toLowerCase());
+    const to = byKey.get(r.to.toLowerCase());
+    if (!from || !to) return;
+    const connected = focusTable && (from.key === focusTable.key || to.key === focusTable.key);
+    drawEdge(ctx, from, to, r, connected, focusTable && !connected);
+  });
+
+  // Tables
+  model.tables.forEach(t => {
+    const hl = hoverTable === t || drag?.t === t || focusTable === t;
+    const dim = focusTable && focusKeys && !focusKeys.has(t.key);
+    drawTable(ctx, t, hl, dim);
+  });
+}
+
+function screenToWorld(sx, sy) {
+  return { x: (sx - cam.x) / cam.scale, y: (sy - cam.y) / cam.scale };
+}
+
+function tableAt(sx, sy) {
+  const w = screenToWorld(sx, sy);
+  for (let i = model.tables.length - 1; i >= 0; i--) {
+    const t = model.tables[i];
+    if (w.x >= t.x && w.x <= t.x + t.w && w.y >= t.y && w.y <= t.y + t.h) return t;
+  }
+  return null;
+}
+
+function pinTable(t) {
+  if (focusTable === t) { focusTable = null; focusKeys = null; }
+  else {
+    focusTable = t;
+    focusKeys = new Set([t.key]);
+    model.relations.forEach(r => {
+      if (r.from.toLowerCase() === t.key) focusKeys.add(r.to.toLowerCase());
+      if (r.to.toLowerCase() === t.key) focusKeys.add(r.from.toLowerCase());
+    });
+  }
+  render();
+}
+
+function zoomAt(sx, sy, factor) {
+  const ns = Math.max(0.08, Math.min(4, cam.scale * factor));
+  const k = ns / cam.scale;
+  cam.x = sx - (sx - cam.x) * k;
+  cam.y = sy - (sy - cam.y) * k;
+  cam.scale = ns;
+  document.getElementById('zoom-pct').textContent = Math.round(ns * 100) + '%';
+  render();
+}
+
+function fitView() {
+  const ts = model.tables;
+  if (!ts.length) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  ts.forEach(t => {
+    x0 = Math.min(x0, t.x); y0 = Math.min(y0, t.y);
+    x1 = Math.max(x1, t.x + t.w); y1 = Math.max(y1, t.y + t.h);
+  });
+  const bw = x1 - x0, bh = y1 - y0;
+  const scale = Math.max(0.08, Math.min(1.5, Math.min((viewW - 120) / bw, (viewH - 120) / bh)));
+  cam.scale = scale;
+  cam.x = (viewW - bw * scale) / 2 - x0 * scale;
+  cam.y = (viewH - bh * scale) / 2 - y0 * scale;
+  document.getElementById('zoom-pct').textContent = Math.round(scale * 100) + '%';
+  render();
+}
+
+function updateDiagram() {
+  const sql = sqlEl.value.trim();
+  if (!sql) {
+    model = { tables: [], relations: [] };
+    statusEl.textContent = ''; statusEl.className = '';
+    emptyEl.style.display = '';
+    render();
+    return;
+  }
+  try {
+    model = parseSQL(sql);
+    if (model.tables.length === 0) {
+      statusEl.textContent = '未检测到表'; statusEl.className = 'err';
+      emptyEl.style.display = '';
+    } else {
+      statusEl.textContent = model.tables.length + ' 表 · ' + model.relations.length + ' 关系';
+      statusEl.className = 'ok';
+      emptyEl.style.display = 'none';
+      // Measure
+      model.tables.forEach(t => measureTable(t, ctx));
+      layoutTables(model.tables, model.relations);
+      focusTable = null; focusKeys = null;
+      fitView();
+    }
+  } catch(e) {
+    statusEl.textContent = '解析错误'; statusEl.className = 'err';
+  }
+}
+
+// Input
+let debounceTimer;
+sqlEl.addEventListener('input', () => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(updateDiagram, 300);
+});
+
+// Mouse events
+canvas.addEventListener('mousedown', e => {
+  const r = canvas.getBoundingClientRect();
+  const sx = e.clientX - r.left, sy = e.clientY - r.top;
+  const t = tableAt(sx, sy);
+  if (t) {
+    const idx = model.tables.indexOf(t);
+    model.tables.splice(idx, 1); model.tables.push(t);
+    const w = screenToWorld(sx, sy);
+    drag = { t, dx: w.x - t.x, dy: w.y - t.y, moved: false };
+    canvas.style.cursor = 'grabbing';
+    render();
+  } else {
+    pan = { sx, sy, cx: cam.x, cy: cam.y, moved: false };
+    canvas.style.cursor = 'grabbing';
+  }
+});
+
+window.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  const sx = e.clientX - r.left, sy = e.clientY - r.top;
+  if (drag) {
+    const w = screenToWorld(sx, sy);
+    drag.t.x = w.x - drag.dx;
+    drag.t.y = w.y - drag.dy;
+    drag.moved = true;
+    render();
+  } else if (pan) {
+    cam.x = pan.cx + (sx - pan.sx);
+    cam.y = pan.cy + (sy - pan.sy);
+    if (Math.abs(sx - pan.sx) + Math.abs(sy - pan.sy) > 3) pan.moved = true;
+    render();
+  } else {
+    const t = tableAt(sx, sy);
+    if (t !== hoverTable) { hoverTable = t; render(); }
+    canvas.style.cursor = t ? 'grab' : 'default';
+  }
+});
+
+window.addEventListener('mouseup', () => {
+  if (drag && !drag.moved) pinTable(drag.t);
+  else if (pan && !pan.moved && focusTable) pinTable(focusTable);
+  drag = null; pan = null;
+  canvas.style.cursor = hoverTable ? 'grab' : 'default';
+});
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  const factor = Math.exp(-e.deltaY * 0.0015);
+  zoomAt(e.clientX - r.left, e.clientY - r.top, factor);
+}, { passive: false });
+
+// Buttons
+const EXAMPLE_SQL = `-- 示例：电商数据库
+CREATE TABLE users (
+  id            BIGINT PRIMARY KEY,
+  email         VARCHAR(255) NOT NULL UNIQUE,
+  full_name     VARCHAR(120),
+  created_at    TIMESTAMP NOT NULL
+);
+
+CREATE TABLE addresses (
+  id          BIGINT PRIMARY KEY,
+  user_id     BIGINT NOT NULL REFERENCES users(id),
+  line1       VARCHAR(255) NOT NULL,
+  city        VARCHAR(80),
+  country     CHAR(2) NOT NULL
+);
+
+CREATE TABLE products (
+  id          BIGINT PRIMARY KEY,
+  sku         VARCHAR(64) NOT NULL UNIQUE,
+  name        VARCHAR(200) NOT NULL,
+  price_cents INT NOT NULL,
+  active      BOOLEAN NOT NULL
+);
+
+CREATE TABLE orders (
+  id            BIGINT PRIMARY KEY,
+  user_id       BIGINT NOT NULL,
+  address_id    BIGINT,
+  status        VARCHAR(32) NOT NULL,
+  total_cents   INT NOT NULL,
+  placed_at     TIMESTAMP NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (address_id) REFERENCES addresses(id)
+);
+
+CREATE TABLE order_items (
+  id          BIGINT PRIMARY KEY,
+  order_id    BIGINT NOT NULL,
+  product_id  BIGINT NOT NULL,
+  quantity    INT NOT NULL,
+  unit_cents  INT NOT NULL,
+  CONSTRAINT fk_oi_order   FOREIGN KEY (order_id)   REFERENCES orders(id),
+  CONSTRAINT fk_oi_product FOREIGN KEY (product_id) REFERENCES products(id)
+);
+
+CREATE TABLE reviews (
+  id          BIGINT PRIMARY KEY,
+  product_id  BIGINT NOT NULL REFERENCES products(id),
+  user_id     BIGINT NOT NULL REFERENCES users(id),
+  rating      SMALLINT NOT NULL,
+  body        TEXT,
+  created_at  TIMESTAMP NOT NULL
+);
+`;
+
+function loadExample() {
+  sqlEl.value = EXAMPLE_SQL;
+  updateDiagram();
+}
+
+document.getElementById('btn-example').addEventListener('click', loadExample);
+document.getElementById('btn-example2').addEventListener('click', loadExample);
+document.getElementById('btn-fit').addEventListener('click', fitView);
+
+document.getElementById('btn-arrange').addEventListener('click', () => {
+  if (model.tables.length) {
+    model.tables.forEach(t => measureTable(t, ctx));
+    layoutTables(model.tables, model.relations);
+    focusTable = null; focusKeys = null;
+    fitView();
+  }
+});
+
+document.getElementById('zoom-in').addEventListener('click', () => zoomAt(viewW/2, viewH/2, 1.3));
+document.getElementById('zoom-out').addEventListener('click', () => zoomAt(viewW/2, viewH/2, 0.7));
+document.getElementById('zoom-pct').addEventListener('click', () => zoomAt(viewW/2, viewH/2, 1/cam.scale));
+
+// Theme toggle
+document.getElementById('btn-theme').addEventListener('click', () => {
+  isDark = !isDark;
+  theme = isDark ? DARK : LIGHT;
+  document.documentElement.dataset.theme = isDark ? 'dark' : 'light';
+  document.body.style.background = theme.bg;
+  document.body.style.color = isDark ? '#e8edf4' : '#1c2530';
+  render();
+});
+
+// PNG export
+document.getElementById('btn-png').addEventListener('click', () => {
+  if (!model.tables.length) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  model.tables.forEach(t => {
+    x0 = Math.min(x0, t.x); y0 = Math.min(y0, t.y);
+    x1 = Math.max(x1, t.x + t.w); y1 = Math.max(y1, t.y + t.h);
+  });
+  const pad = 40, scale = 2;
+  const bw = x1 - x0 + pad * 2, bh = y1 - y0 + pad * 2;
+  const cv = document.createElement('canvas');
+  cv.width = Math.ceil(bw * scale); cv.height = Math.ceil(bh * scale);
+  const ec = cv.getContext('2d');
+  ec.fillStyle = theme.bg; ec.fillRect(0, 0, cv.width, cv.height);
+  ec.setTransform(scale, 0, 0, scale, -(x0 - pad) * scale, -(y0 - pad) * scale);
+  const byKey = new Map(model.tables.map(t => [t.key, t]));
+  model.relations.forEach(r => {
+    const from = byKey.get(r.from.toLowerCase());
+    const to = byKey.get(r.to.toLowerCase());
+    if (from && to) drawEdge(ec, from, to, r, false, false);
+  });
+  model.tables.forEach(t => drawTable(ec, t, false, false));
+  const link = document.createElement('a');
+  link.download = 'er-diagram.png';
+  link.href = cv.toDataURL('image/png');
+  link.click();
+});
+
+// Splitter
+const splitter = document.getElementById('splitter');
+const editorPane = document.getElementById('editor-pane');
+let splitting = false;
+splitter.addEventListener('mousedown', e => { splitting = true; e.preventDefault(); });
+window.addEventListener('mousemove', e => {
+  if (splitting) {
+    const w = Math.max(220, Math.min(window.innerWidth - 300, e.clientX));
+    editorPane.style.width = w + 'px';
+    resize();
+  }
+});
+window.addEventListener('mouseup', () => { splitting = false; });
+
+// Touch support
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length === 1) {
+    const touch = e.touches[0];
+    const r = canvas.getBoundingClientRect();
+    const sx = touch.clientX - r.left, sy = touch.clientY - r.top;
+    const t = tableAt(sx, sy);
+    if (t) {
+      const w = screenToWorld(sx, sy);
+      drag = { t, dx: w.x - t.x, dy: w.y - t.y, moved: false };
+    } else {
+      pan = { sx, sy, cx: cam.x, cy: cam.y, moved: false };
+    }
+  }
+}, { passive: true });
+
+canvas.addEventListener('touchmove', e => {
+  if (e.touches.length === 1) {
+    const touch = e.touches[0];
+    const r = canvas.getBoundingClientRect();
+    const sx = touch.clientX - r.left, sy = touch.clientY - r.top;
+    if (drag) {
+      const w = screenToWorld(sx, sy);
+      drag.t.x = w.x - drag.dx; drag.t.y = w.y - drag.dy;
+      drag.moved = true; render();
+    } else if (pan) {
+      cam.x = pan.cx + (sx - pan.sx); cam.y = pan.cy + (sy - pan.sy);
+      pan.moved = true; render();
+    }
+  }
+}, { passive: true });
+
+canvas.addEventListener('touchend', () => {
+  if (drag && !drag.moved) pinTable(drag.t);
+  drag = null; pan = null;
+});
+
+// Init
+window.addEventListener('resize', resize);
+resize();
+</script>
+</body>
+</html>
